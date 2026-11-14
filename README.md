@@ -36,8 +36,3 @@ Xây dựng hệ thống cảnh báo khí gas và nhiệt độ sử dụng ESP3
 
 ## 5. Mô phỏng
 Link Wokwi: https://wokwi.com/projects/480668353592368129
-
-
-- Họ và tên: ...
-- Lớp: ...
-- Môn học: Lập trình nhúng
