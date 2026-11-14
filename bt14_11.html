@@ -1,0 +1,424 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hệ thống báo cháy ESP32</title>
+
+<!-- MQTT -->
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 25px;
+    font-family: Arial, sans-serif;
+    background: #eef2f7;
+    color: #263238;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+}
+
+h1 {
+    text-align: center;
+    color: #c62828;
+    margin-bottom: 10px;
+}
+
+.subtitle {
+    text-align: center;
+    margin-bottom: 25px;
+    color: #607d8b;
+}
+
+.status {
+    text-align: center;
+    padding: 12px;
+    background: #fff;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+
+.card, .chart-box, .control-box {
+    background: white;
+    padding: 22px;
+    border-radius: 12px;
+    box-shadow: 0 3px 10px #00000012;
+}
+
+.card {
+    text-align: center;
+}
+
+.card h2 {
+    margin-top: 0;
+}
+
+.value {
+    font-size: 38px;
+    font-weight: bold;
+    color: #1565c0;
+}
+
+.charts {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.chart-box h3, .control-box h3 {
+    text-align: center;
+}
+
+.control-box {
+    margin-top: 20px;
+    text-align: center;
+}
+
+button {
+    padding: 12px 25px;
+    margin: 8px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    color: white;
+    font-size: 15px;
+}
+
+.on {
+    background: #2e7d32;
+}
+
+.off {
+    background: #c62828;
+}
+
+.mode {
+    background: #1565c0;
+}
+
+.state {
+    font-weight: bold;
+    margin: 10px;
+}
+
+.alarm {
+    font-size: 20px;
+    font-weight: bold;
+    color: #2e7d32;
+    text-align: center;
+    margin: 15px;
+}
+
+@media(max-width: 700px) {
+    .cards, .charts {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>HỆ THỐNG BÁO CHÁY ESP32</h1>
+<p class="subtitle">
+Giám sát khí gas và nhiệt độ thông qua MQTT
+</p>
+
+<div class="status" id="connection">
+    Đang kết nối MQTT...
+</div>
+
+<!-- HIỂN THỊ DỮ LIỆU -->
+<div class="cards">
+
+    <div class="card">
+        <h2>Nồng độ khí gas</h2>
+        <div class="value">
+            <span id="gas">--</span> %
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Nhiệt độ</h2>
+        <div class="value">
+            <span id="temperature">--</span> °C
+        </div>
+    </div>
+
+</div>
+
+<div class="alarm" id="alarm">
+    HỆ THỐNG AN TOÀN
+</div>
+
+<!-- BIỂU ĐỒ -->
+<div class="charts">
+
+    <div class="chart-box">
+        <h3>Biểu đồ nồng độ khí gas</h3>
+        <canvas id="gasChart"></canvas>
+    </div>
+
+    <div class="chart-box">
+        <h3>Biểu đồ nhiệt độ</h3>
+        <canvas id="tempChart"></canvas>
+    </div>
+
+</div>
+
+<!-- ĐIỀU KHIỂN -->
+<div class="control-box">
+
+    <h3>ĐIỀU KHIỂN THIẾT BỊ</h3>
+
+    <p>Chế độ hoạt động:</p>
+
+    <button class="mode" onclick="setMode('AUTO')">
+        AUTO
+    </button>
+
+    <button class="mode" onclick="setMode('MANUAL')">
+        MANUAL
+    </button>
+
+    <hr>
+
+    <h3>Quạt thông gió</h3>
+
+    <button class="on" onclick="controlFan('ON')">
+        BẬT QUẠT
+    </button>
+
+    <button class="off" onclick="controlFan('OFF')">
+        TẮT QUẠT
+    </button>
+
+    <p class="state">
+        Trạng thái quạt:
+        <span id="fanState">OFF</span>
+    </p>
+
+    <hr>
+
+    <h3>Máy bơm</h3>
+
+    <button class="on" onclick="controlPump('ON')">
+        BẬT MÁY BƠM
+    </button>
+
+    <button class="off" onclick="controlPump('OFF')">
+        TẮT MÁY BƠM
+    </button>
+
+    <p class="state">
+        Trạng thái máy bơm:
+        <span id="pumpState">OFF</span>
+    </p>
+
+</div>
+
+</div>
+
+<script>
+
+// ================= MQTT CONNECTION =================
+
+const broker = "ws://broker.emqx.io:8083/mqtt";
+
+const client = mqtt.connect(broker);
+
+// MQTT TOPICS
+
+const topics = {
+    gas: "giadinh/baochay/gas",
+    temp: "giadinh/baochay/temperature",
+    fanCmd: "giadinh/baochay/fan/cmd",
+    pumpCmd: "giadinh/baochay/pump/cmd",
+    fanState: "giadinh/baochay/fan/state",
+    pumpState: "giadinh/baochay/pump/state",
+    alarm: "giadinh/baochay/alarm",
+    mode: "giadinh/baochay/mode"
+};
+
+// ================= CHART DATA =================
+
+let labels = [];
+let gasData = [];
+let tempData = [];
+
+const gasChart = new Chart(
+    document.getElementById("gasChart"), {
+    type: "line",
+    data: {
+        labels: labels,
+        datasets: [{
+            label: "Gas (%)",
+            data: gasData,
+            borderColor: "red",
+            tension: 0.3
+        }]
+    },
+    options: {
+        responsive: true,
+        animation: false
+    }
+});
+
+const tempChart = new Chart(
+    document.getElementById("tempChart"), {
+    type: "line",
+    data: {
+        labels: labels,
+        datasets: [{
+            label: "Temperature (°C)",
+            data: tempData,
+            borderColor: "blue",
+            tension: 0.3
+        }]
+    },
+    options: {
+        responsive: true,
+        animation: false
+    }
+});
+
+// ================= MQTT EVENTS =================
+
+client.on("connect", function() {
+
+    document.getElementById("connection").innerText =
+        "Đã kết nối MQTT Broker";
+
+    // Đăng ký nhận dữ liệu
+    client.subscribe([
+        topics.gas,
+        topics.temp,
+        topics.fanState,
+        topics.pumpState,
+        topics.alarm
+    ]);
+
+});
+
+client.on("error", function(error) {
+    document.getElementById("connection").innerText =
+        "Lỗi kết nối MQTT";
+    console.log(error);
+});
+
+// ================= RECEIVE DATA =================
+
+client.on("message", function(topic, message) {
+
+    let value = message.toString();
+
+    if (topic === topics.gas) {
+
+        document.getElementById("gas").innerText = value;
+
+        gasData.push(Number(value));
+
+        updateChart();
+    }
+
+    if (topic === topics.temp) {
+
+        document.getElementById("temperature").innerText = value;
+
+        tempData.push(Number(value));
+
+        updateChart();
+    }
+
+    if (topic === topics.fanState) {
+        document.getElementById("fanState").innerText = value;
+    }
+
+    if (topic === topics.pumpState) {
+        document.getElementById("pumpState").innerText = value;
+    }
+
+    if (topic === topics.alarm) {
+
+        const alarm = document.getElementById("alarm");
+
+        if (value === "ON") {
+            alarm.innerText = "CẢNH BÁO CHÁY!";
+            alarm.style.color = "red";
+        } else {
+            alarm.innerText = "HỆ THỐNG AN TOÀN";
+            alarm.style.color = "green";
+        }
+    }
+
+});
+
+// ================= UPDATE CHART =================
+
+function updateChart() {
+
+    let time = new Date().toLocaleTimeString();
+
+    if (labels.length === 0 ||
+        labels[labels.length - 1] !== time) {
+        labels.push(time);
+    }
+
+    while (gasData.length > 20) gasData.shift();
+    while (tempData.length > 20) tempData.shift();
+
+    while (labels.length > 20) labels.shift();
+
+    gasChart.update();
+    tempChart.update();
+}
+
+// ================= CONTROL DEVICES =================
+
+function setMode(mode) {
+
+    client.publish(topics.mode, mode);
+
+}
+
+function controlFan(command) {
+
+    setMode("MANUAL");
+
+    client.publish(topics.fanCmd, command);
+
+}
+
+function controlPump(command) {
+
+    setMode("MANUAL");
+
+    client.publish(topics.pumpCmd, command);
+
+}
+
+</script>
+
+</body>
+</html>
